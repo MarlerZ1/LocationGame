@@ -2,9 +2,9 @@ import os
 
 import sqlalchemy
 from flask import Flask, render_template, request, url_for, redirect
-from flask_login import LoginManager, login_user, login_required, logout_user
+from flask_login import LoginManager, login_user, login_required, logout_user, current_user
 from flask_sqlalchemy import SQLAlchemy
-from flask_admin import Admin
+from flask_admin import Admin, AdminIndexView, expose
 from flask_admin.contrib.sqla import ModelView
 from dotenv import load_dotenv
 from sqlalchemy.orm import relationship
@@ -46,6 +46,9 @@ class UserLogin:
     def is_anonymous(self):
         return False
 
+    def is_admin(self):
+        return self.__user.is_admin
+
     def get_id(self):
         return str(self.__user.id)
 
@@ -58,8 +61,9 @@ def load_user(user_id):
 
 class User(db.Model):
     id = db.mapped_column(db.Integer, primary_key=True)
-    name = db.mapped_column(db.String(32), unique=True)
-    password = db.mapped_column(db.Text)
+    name = db.mapped_column(db.String(32), unique=True, nullable=False)
+    is_admin = db.mapped_column(db.Boolean, nullable=False)
+    password = db.mapped_column(db.Text, nullable=False)
     position = relationship("Position", back_populates="user")
     position_id = db.mapped_column(db.ForeignKey("position_table.id"))
 
@@ -77,6 +81,7 @@ class Position(db.Model):
 @login_required
 def index():
     return render_template('index.html')
+
 
 @app.route('/logout')
 def logout():
@@ -104,7 +109,7 @@ def registration():
                 psw_hash = generate_password_hash(request.form['password'])
                 p = Position(x=0, y=0)
                 db.session.add(p)
-                u = User(name=request.form['login'], password=psw_hash, position=p)
+                u = User(name=request.form['login'], is_admin=False, password=psw_hash, position=p)
                 db.session.add(u)
                 db.session.commit()
             except sqlalchemy.exc.IntegrityError as e:
@@ -116,8 +121,27 @@ def registration():
     return render_template('registration.html')
 
 
-admin = Admin(app, name='LocationGame', template_mode='bootstrap4')
-admin.add_view(ModelView(Position, db.session, name="Позиция"))
+class AdminMixin:
+    def is_accessible(self):
+        return current_user.is_authenticated and current_user.is_admin()
+
+    def inaccessible_callback(self, name, **kwargs):
+        if not current_user.is_authenticated:
+            return redirect(url_for('login', next=request.url))
+        else:
+            return redirect(url_for('index'))
+
+
+class AdminView(AdminMixin, ModelView):
+    pass
+
+
+class HomeAdminView(AdminMixin, AdminIndexView):
+    pass
+
+
+admin = Admin(app, name='LocationGame', template_mode='bootstrap4', index_view=HomeAdminView(name="Home"))
+admin.add_view(AdminView(Position, db.session, name="Позиция"))
 
 if __name__ == '__main__':
     app.app_context().push()
