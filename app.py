@@ -1,13 +1,14 @@
 import os
 
 import sqlalchemy
-from flask import Flask, render_template, request
+from flask import Flask, render_template, request, url_for, redirect
+from flask_login import LoginManager, login_user, login_required, logout_user
 from flask_sqlalchemy import SQLAlchemy
 from flask_admin import Admin
 from flask_admin.contrib.sqla import ModelView
 from dotenv import load_dotenv
 from sqlalchemy.orm import relationship
-from werkzeug.security import generate_password_hash
+from werkzeug.security import generate_password_hash, check_password_hash
 
 load_dotenv()
 
@@ -24,13 +25,42 @@ class Config:
 app.config.from_object(Config)
 
 db = SQLAlchemy(app)
+login_manager = LoginManager(app)
+
+
+class UserLogin:
+    def fromDB(self, user_id):
+        self.__user = User.query.filter_by(id=user_id).first()
+        return self
+
+    def create(self, user):
+        self.__user = user
+        return self
+
+    def is_authenticated(self):
+        return True
+
+    def is_active(self):
+        return True
+
+    def is_anonymous(self):
+        return False
+
+    def get_id(self):
+        return str(self.__user.id)
+
+
+@login_manager.user_loader
+def load_user(user_id):
+    print("load_user")
+    return UserLogin().fromDB(user_id)
 
 
 class User(db.Model):
     id = db.mapped_column(db.Integer, primary_key=True)
     name = db.mapped_column(db.String(32), unique=True)
     password = db.mapped_column(db.Text)
-    position = relationship("Position",back_populates="user")
+    position = relationship("Position", back_populates="user")
     position_id = db.mapped_column(db.ForeignKey("position_table.id"))
 
 
@@ -44,12 +74,25 @@ class Position(db.Model):
 
 
 @app.route('/')
+@login_required
 def index():
     return render_template('index.html')
 
+@app.route('/logout')
+def logout():
+    logout_user()
+    return redirect(url_for('index'))
 
-@app.route('/login')
+
+@app.route('/login', methods=["POST", "GET"])
 def login():
+    if request.method == "POST":
+        user = User.query.filter_by(name=request.form['login']).first()
+
+        if user and check_password_hash(str(user.password), str(request.form['password'])):
+            userLogin = UserLogin().create(user)
+            login_user(userLogin)
+            return redirect(url_for('index'))
     return render_template('login.html')
 
 
@@ -67,7 +110,8 @@ def registration():
             except sqlalchemy.exc.IntegrityError as e:
                 db.session.rollback()
                 print("There is a login dublicate:\n ", e)
-
+            else:
+                return redirect(url_for('login'))
 
     return render_template('registration.html')
 
